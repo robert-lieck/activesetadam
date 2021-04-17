@@ -12,15 +12,16 @@ from asadam import ASAdam
 
 class M(Module):
 
-    def __init__(self, loc, sigma=((1, 0), (0, 1)), center=(0, 0)):
+    def __init__(self, loc, sigma=((1, 0), (0, 1)), center=(0, 0), div=1.):
         super().__init__()
         self.loc = Parameter(torch.Tensor(loc))
         self.center = torch.Tensor(center)
         self.prec = torch.inverse(torch.Tensor(sigma))
+        self.div = div
 
     def loss(self, loc):
         diff = loc - self.center
-        return torch.einsum('...a,ab,...b->...', diff, self.prec, diff) / 10
+        return torch.einsum('...a,ab,...b->...', diff, self.prec, diff) / self.div
 
     def forward(self):
         return self.loss(self.loc)
@@ -63,44 +64,60 @@ def plot_boxes(sizes, offsets, ax, label=None, **kwargs):
     ax.add_collection(PolyCollection(verts=verts, **kwargs))
 
 
-if __name__ == "__main__":
-
-    plot_range = 10
-    n_grid = 50
-    D = 2
-    n_iterations = 100
-    lr = 2
-
-    l1 = None
-    glue = 0.21
-    safety = 1
-    active = True
+def demo(module_kwargs,
+         asadam_kwargs=None,
+         module_class=M,
+         plot_range=((-10, 10), (-10, 10)),
+         n_grid=50,
+         n_iterations=100,
+         lr=1,
+         real_adam=False
+):
+    if asadam_kwargs is None:
+        asadam_kwargs = {}
+    asadam_kwargs = {**dict(lr=lr, debug=True), **asadam_kwargs}
 
     fig, axes = plt.subplots(1, 2, figsize=(20, 10))
+    # fig, axes = plt.subplots(1, 1, figsize=(13, 13))
 
-    for asadam, ax in [(False, axes[0]), (True, axes[1])]:
+    for asadam, ax in [
+        # (True, axes),
+        (False, axes[0]),
+        (True, axes[1])
+    ]:
+
+        module = module_class(**module_kwargs)
 
         if asadam:
             ax.set_title("Active Set Adam")
         else:
             ax.set_title("Normal Adam")
-
-        module = M(loc=[-6, 9], sigma=[[1, 0], [0, 4]], center=(5, -7))
-        stats = {"exp_avg": [],
-                 "exp_avg_corr": [],
-                 "exp_avg_std": [],
-                 "exp_avg_std_corr": [],
-                 "true_grad": [],
-                 "eff_grad": [],}
+        stats = {
+            "grad": [],
+            "avg_grad": [],
+            "avg_sq_grad": [],
+            "avg_grad_corr": [],
+            "avg_sq_grad_corr": [],
+            "direction": [],
+        }
         if asadam:
-            optimizer = ASAdam(module.parameters(), lr=lr, l1=l1, glue=glue, safety=safety, active=active, debug=True)
+            optimizer = ASAdam(module.parameters(), **asadam_kwargs)
             stats = {**stats,
-                     "exp_avg_var": [],
-                     "exp_avg_var_corr": [],
-                     "uncertainty": []}
+                     "avg_var_corr": [],
+                     "eff_var": [],
+                     "uncertainty": [],
+                     "safe_grad": [],
+                     "avg_var": [],
+                     }
         else:
-            optimizer = ASAdam(module.parameters(), lr=lr, l1=None, glue=None, safety=safety, active=active, debug=True)
-            # optimizer = Adam(module.parameters(), lr=lr)
+            if real_adam:
+                stats = {}
+                optimizer = torch.optim.Adam(module.parameters(), lr=lr)
+            else:
+                optimizer = ASAdam(module.parameters(), **{**asadam_kwargs,
+                                                           **dict(l1=None,
+                                                                  glue=None,
+                                                                  sub_uncertain=False)})
 
         trace = [module.loc.detach().clone()]
         for it in range(n_iterations):
@@ -121,73 +138,93 @@ if __name__ == "__main__":
 
         # define grid for heatmap
         # 1D space used for each dimension
-        grid = torch.linspace(-plot_range, plot_range, n_grid)
+        x_grid = torch.linspace(*plot_range[0], n_grid)
+        y_grid = torch.linspace(*plot_range[1], n_grid)
         # meshgrid with D dimensions (tuple of coordinates)
-        xyz = torch.meshgrid(*(grid,) * D)
+        xy = torch.meshgrid([x_grid, y_grid])
         # flatten and concatenate along new dimension to get grid of coordinates
-        locs = torch.cat(tuple(l.flatten()[..., None] for l in xyz), dim=-1)
+        locs = torch.cat(tuple(l.flatten()[..., None] for l in xy), dim=-1)
         # evaluate function on grid
-        f = module.loss(locs).reshape(*(n_grid,) * D).transpose(-2, -1)
+        f = module.loss(locs).reshape(n_grid, n_grid).transpose(-2, -1)
 
         # objective
-        ax.contourf(grid, grid, f, 100, zorder=-10, cmap='Reds_r')
+        ax.contourf(x_grid, y_grid, f, 100, zorder=-10, cmap='Reds_r')
         # optimum
-        ax.scatter(*module.center, marker='+', c='k', zorder=10, label='optimum')
+        ax.scatter(*module.center, marker='+', c='k', zorder=100, label='optimum')
         # zero lines
-        ax.plot([-plot_range, plot_range, np.nan, 0, 0], [0, 0, np.nan, -plot_range, plot_range], c=(0, 0, 0, 0.1))
+        ax.plot([plot_range[0][0], plot_range[0][1], np.nan, 0, 0],
+                [0, 0, np.nan, plot_range[1][0], plot_range[1][1]],
+                c=(0, 0, 0, 0.1))
         # trace
         c = (0.1, 0.1, 0.1)
         ax.plot(*trace.transpose(), '-o', linewidth=2, markersize=4, color=c, label='trace')
-        ax.scatter(*trace[0], s=5, color=c)
-        # step
-        plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["eff_grad"] * lr,
-                  ax=ax, markersize=2, linewidth=1, color=(1, 0.1, 1), label='step')
-        # true grad
-        c = (1, 0.1, 0.1)
-        plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["true_grad"],
-                  ax=ax, linewidth=1, markersize=2, label='gradient', color=c, zorder=2)
-        # average
-        c = (0.1, 0.1, 1)
-        plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["exp_avg"],
-                  ax=ax, linewidth=1, markersize=2, label='average', color=c, zorder=3)
-        plot_halos(*(2 * stats["exp_avg_std"].transpose()), offsets=trace[:-1],
-                   ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='-', zorder=3)
-        # corrected average
-        c = (0.1, 0.9, 0.1)
-        plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["exp_avg_corr"],
-                  ax=ax, pin_style='--', linewidth=1, markersize=2, label='corrected average', color=c, zorder=1)
-        plot_halos(*(2 * stats["exp_avg_std_corr"].transpose()), offsets=trace[:-1],
-                   ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='--', zorder=1)
-        if asadam:
-
-            # L1 boxes
+        ax.scatter(*trace[0], s=5, color=c, zorder=0)
+        if asadam or not real_adam:
+            # true grad
             c = (1, 0.1, 0.1)
-            if l1 is not None:
-                plot_boxes(sizes=np.ones((n_iterations, 2)) * 2 * l1, offsets=trace[:-1],
-                           ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='--', label="L1")
-            # L1 + glue boxes
-            if glue is not None:
-                plot_boxes(sizes=np.ones((n_iterations, 2)) * 2 * ((l1 if l1 is not None else 0.) + glue),
-                           offsets=trace[:-1],
-                           ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='-',
-                           label=f"{('L1 + ' if l1 is not None else '')}glue")
-            # variance
-            c = (0.1, 0.9, 0.9)
-            plot_halos(*(2 * np.sqrt(stats["exp_avg_var"]).transpose()), offsets=trace[:-1] - stats["exp_avg"],
-                       ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='-')
-            plot_halos(*(2 * np.sqrt(stats["exp_avg_var_corr"]).transpose()), offsets=trace[:-1] - stats["exp_avg"],
-                       ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='--', label="STD around average")
-            # bounds
-            c = (0, 0, 1)
-            plot_boxes(sizes=stats["uncertainty"] * 2 * safety, offsets=trace[:-1] - stats["exp_avg"],
-                       ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='--', label="uncertainty")
+            plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["grad"],
+                      ax=ax, linewidth=2, markersize=3, label='grad', color=c, zorder=10)
+            # # average
+            # c = (0.1, 0.1, 1)
+            # plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["avg_grad"],
+            #           ax=ax, pin_style='-', linewidth=2, markersize=3, label='average', color=c, zorder=20)
+            # plot_halos(*(2 * np.sqrt(stats["avg_sq_grad"]).transpose()), offsets=trace[:-1],
+            #            ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='-', zorder=20)
+            # corrected average
+            c = (0.1, 0.9, 0.1)
+            plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["avg_grad_corr"],
+                      ax=ax, pin_style='-', linewidth=2, markersize=3, label='corrected average', color=c, zorder=30)
+            plot_halos(*(2 * np.sqrt(stats["avg_sq_grad_corr"]).transpose()), offsets=trace[:-1],
+                       ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='-', zorder=30)
+            # step
+            c = (1, 0.1, 1)
+            plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["direction"],
+                      ax=ax, markersize=2, linewidth=1, color=c, label='step', zorder=40)
+            plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["direction"] * lr,
+                      ax=ax, pin_style='--', markersize=2, linewidth=1, color=c, zorder=40)
+            if asadam:
+                # L1 boxes
+                c = (1, 0.1, 0.1)
+                l1, glue, safety = asadam_kwargs['l1'], asadam_kwargs['glue'], asadam_kwargs['safety']
+                if l1 is not None:
+                    plot_boxes(sizes=np.ones((n_iterations, 2)) * 2 * l1, offsets=trace[:-1],
+                               ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='--', label="L1")
+                # L1 + glue boxes
+                if glue is not None:
+                    plot_boxes(sizes=np.ones((n_iterations, 2)) * 2 * ((l1 if l1 is not None else 0.) + glue),
+                               offsets=trace[:-1],
+                               ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='-',
+                               label=f"{('L1 + ' if l1 is not None else '')}glue")
+                # variance
+                c = (0.1, 0.9, 0.9)
+                plot_halos(*(2 * np.sqrt(stats["avg_var_corr"]).transpose()), offsets=trace[:-1] - stats["avg_grad_corr"],
+                           ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='-', label="STD")
+                plot_halos(*(2 * np.sqrt(stats["eff_var"]).transpose()),
+                           offsets=trace[:-1] - stats["avg_grad_corr"],
+                           ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=0.5, linestyle='--', label="effective STD")
+                # bounds
+                c = (0, 0, 1)
+                plot_boxes(sizes=stats["uncertainty"] * 2 * safety, offsets=trace[:-1] - stats["avg_grad_corr"],
+                           ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='--', label="uncertainty")
+                # effective gradient
+                plot_pins(locs=trace[:-1], heads=trace[:-1] - stats["safe_grad"],
+                          ax=ax, pin_style='--', linewidth=1, markersize=2, label='effective average', color=c, zorder=30)
 
         # adjust stuff
         ax.legend()
         ax.set_aspect('equal')
-        ax.set_xlim(-plot_range, plot_range)
-        ax.set_ylim(-plot_range, plot_range)
+        ax.set_xlim(*plot_range[0])
+        ax.set_ylim(*plot_range[1])
 
     # show in tight layout
     fig.tight_layout()
     plt.show()
+
+
+if __name__ == "__main__":
+    demo(module_kwargs=dict(loc=[-6, 9], sigma=[[1, 0], [0, 4]], center=(5, -7), div=10.),
+         asadam_kwargs=dict(l1=None, glue=0.21, safety=2),
+         lr=2)
+    demo(module_kwargs=dict(loc=[0, 0], sigma=[[1, -0.999], [-0.999, 1]], center=(5, 5), div=10000),
+         asadam_kwargs=dict(active=False, l1=0.1, glue=None, log_scale=1, safety=1, max_activation=1, min_steps=5),
+         plot_range=((-1, 10), (-1, 10)))
