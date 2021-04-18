@@ -68,11 +68,11 @@ class ASAdam(Optimizer):
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
-        if l1 is not None and not 0.0 <= l1:
+        if l1 is not None and not torch.all(0.0 <= torch.tensor(l1)):
             raise ValueError("Invalid L1 value: {}".format(l1))
-        if glue is not None and not 0.0 <= glue:
+        if glue is not None and not torch.all(0.0 <= torch.tensor(glue)):
             raise ValueError("Invalid glue value: {}".format(glue))
-        if log_scale is not None and not 0.0 <= log_scale:
+        if log_scale is not None and not torch.all(0.0 <= torch.tensor(log_scale)):
             raise ValueError("Invalid log_scale value: {}".format(log_scale))
         if max_activation is not None and not 0.0 <= max_activation:
             raise ValueError("Invalid max_activation value: {}".format(max_activation))
@@ -162,10 +162,10 @@ class ASAdam(Optimizer):
                 if l1 is not None:
                     if log_scale is None:
                         # add normal L1 term
-                        grad = grad.add(p.sign(), alpha=group['l1'])
+                        grad = grad + group['l1'] * p.sign()
                     else:
                         # add hyperbolic L1 term
-                        grad = grad.addcdiv(p.sign(), p.abs() + log_scale, value=log_scale * group['l1'])
+                        grad = grad + log_scale * group['l1'] * p.sign() / (p.abs() + log_scale)
 
                 # Decay the first and second moment running average coefficient
                 exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
