@@ -124,7 +124,7 @@ class ASAdam(Optimizer):
                 # State initialization
                 if len(state) == 0:
                     state['step'] = 0
-                    state['activation_step'] = 0
+                    state['activation_step'] = np.inf
                     # Exponential moving average of gradient values
                     state['exp_avg'] = torch.zeros_like(p, memory_format=torch.preserve_format)
                     # Exponential moving average of squared gradient values
