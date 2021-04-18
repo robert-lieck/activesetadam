@@ -187,6 +187,10 @@ def demo(module_kwargs,
                 c = (1, 0.1, 0.1)
                 l1, glue, safety = asadam_kwargs['l1'], asadam_kwargs['glue'], asadam_kwargs['safety']
                 if l1 is not None:
+                    l1 = torch.tensor(l1).numpy()
+                if glue is not None:
+                    glue = torch.tensor(glue).numpy()
+                if l1 is not None:
                     plot_boxes(sizes=np.ones((n_iterations, 2)) * 2 * l1, offsets=trace[:-1],
                                ax=ax, ec=c, fc=(0, 0, 0, 0), linewidth=1, linestyle='--', label="L1")
                 # L1 + glue boxes
@@ -222,9 +226,28 @@ def demo(module_kwargs,
 
 
 if __name__ == "__main__":
+    # simple example
     demo(module_kwargs=dict(loc=[-6, 9], sigma=[[1, 0], [0, 4]], center=(5, -7), div=10.),
          asadam_kwargs=dict(l1=None, glue=0.21, safety=2),
          lr=2)
+    # delayed activation and log_scale
     demo(module_kwargs=dict(loc=[0, 0], sigma=[[1, -0.999], [-0.999, 1]], center=(5, 5), div=10000),
-         asadam_kwargs=dict(active=False, l1=0.1, glue=None, log_scale=1, safety=1, max_activation=1, min_steps=5),
+         asadam_kwargs=dict(active=False, l1=0.1, glue=None, log_scale=1, safety=1, max_activation=1, min_steps=5,
+                            # betas=(0.5, 0.99, 0.5),
+                            ),
+         plot_range=((-1, 11), (-1, 11)))
+    # vectorised l1/glue/log_scale
+    demo(module_kwargs=dict(loc=[0, 0], sigma=[[1, 0], [0, 1]], center=(5, 5), div=10),
+         asadam_kwargs=dict(active=False,
+                            l1=torch.tensor([0.2, 0.4]),
+                            glue=torch.tensor([0.2, 0.4]),
+                            log_scale=torch.tensor([0.1, 2]),
+                            safety=1, lr=1e-1,),
+         plot_range=((-1, 10), (-1, 10)))
+    # prioritised activation, no regularisation
+    demo(module_kwargs=dict(loc=[0, 0], sigma=[[1, 0], [0, 1]], center=(5, 5), div=10),
+         asadam_kwargs=dict(active=False, l1=None, glue=0, safety=0, lr=1,
+                            # betas=(0.1, 0.9, 0.1),
+                            # betas=(0.5, 0.99, 0.5),
+                            max_activation=1, min_steps=10),
          plot_range=((-1, 10), (-1, 10)))
