@@ -118,6 +118,9 @@ class ASAdam(Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError('ASAdam does not support sparse gradients, please consider SparseAdam instead')
                 amsgrad = group['amsgrad']
+                l1, glue, log_scale = group['l1'], group['glue'], group['log_scale']
+                max_activation, min_steps = group['max_activation'], group['min_steps']
+                beta1, beta2, beta3 = group['betas']
 
                 state = self.state[p]
 
@@ -145,9 +148,6 @@ class ASAdam(Optimizer):
                 exp_avg, exp_avg_sq, exp_avg_var = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_var']
                 if amsgrad:
                     max_exp_avg_sq = state['max_exp_avg_sq']
-                beta1, beta2, beta3 = group['betas']
-                l1, glue, log_scale, active = group['l1'], group['glue'], group['log_scale'], state['active']
-                max_activation, min_steps = group['max_activation'], group['min_steps']
 
                 state['step'] += 1
                 state['activation_step'] += 1
@@ -200,6 +200,7 @@ class ASAdam(Optimizer):
                     # reduced abs gradient: subtract uncertainty (results may also be negative)
                     reduced_abs_grad = avg_grad_corr.abs() - uncertainty * group['safety']
                     # only activate if minimal number of steps was taken
+                    active = state['active']
                     if min_steps <= state['activation_step']:
                         # activate based on reduced gradient
                         sticky = 0.
