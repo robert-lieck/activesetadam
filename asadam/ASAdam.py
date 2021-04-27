@@ -69,17 +69,24 @@ class ASAdam(Optimizer):
         a call to step().
         """
         self.debug = debug
+
+        def _all(x):
+            if isinstance(x, bool):
+                return x
+            else:
+                return torch.all(x)
+
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
-        if l1 is not None and not torch.all(0.0 <= torch.tensor(l1)):
+        if l1 is not None and not _all(0.0 <= l1):
             raise ValueError("Invalid L1 value: {}".format(l1))
-        if glue is not None and not torch.all(0.0 <= torch.tensor(glue)):
+        if glue is not None and not _all(0.0 <= glue):
             raise ValueError("Invalid glue value: {}".format(glue))
-        if l1_log is not None and not torch.all(0.0 <= torch.tensor(l1_log)):
+        if l1_log is not None and not _all(0.0 <= l1_log):
             raise ValueError("Invalid L1-log value: {}".format(l1_log))
-        if log_scale is not None and not torch.all(0.0 <= torch.tensor(log_scale)):
+        if log_scale is not None and not _all(0.0 <= log_scale):
             raise ValueError("Invalid log_scale value: {}".format(log_scale))
         if (l1_log is None) != (log_scale is None):
             raise ValueError(f"l1_log and log_scale have to be either both None or both provided, "
