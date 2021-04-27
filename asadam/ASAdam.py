@@ -24,7 +24,7 @@ class ASAdam(Optimizer):
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999, 0.9), eps=1e-8,
                  l1=None, glue=None, l1_log=None, log_scale=None, safety=1., active=None, sub_uncertain=False,
-                 max_activation=None, min_steps=0,
+                 max_activation=None, min_steps=0, store_activation_grad=False,
                  weight_decay=0, amsgrad=False, debug=False):
         """
         :param params: Same as for Adam
@@ -60,6 +60,9 @@ class ASAdam(Optimizer):
         :param min_steps: Minimal number of steps to take between activating dimensions. That is, if a dimension is
         activated in iteration n, at least min_steps steps (including the current step) are taken before activating the
         next dimension(s), i.e. earliest in iteration n + min_steps.
+        :param store_activation_grad: (False/True; default: False) If True, for every parameter store the maximum
+        absolute gradient of newly activated dimensions with key 'activation_grad' in state for that parameter. If no
+        new dimensions were activated the value is None. Can be retrieved after each call of step().
         :param weight_decay: Same as for Adam
         :param amsgrad: Same as for Adam
         :param debug: (False/True; default: False) If True, collect additional debug information that is available after
@@ -96,7 +99,7 @@ class ASAdam(Optimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         l1=l1,  glue=glue, l1_log=l1_log, log_scale=log_scale,
                         safety=safety, active=active, sub_uncertain=sub_uncertain,
-                        max_activation=max_activation, min_steps=min_steps,
+                        max_activation=max_activation, min_steps=min_steps, store_activation_grad=store_activation_grad,
                         weight_decay=weight_decay, amsgrad=amsgrad)
         super(ASAdam, self).__init__(params, defaults)
 
@@ -129,6 +132,7 @@ class ASAdam(Optimizer):
                 l2 = group['weight_decay']
                 l1, glue, l1_log, log_scale = group['l1'], group['glue'], group['l1_log'], group['log_scale']
                 max_activation, min_steps = group['max_activation'], group['min_steps']
+                store_activation_grad = group['store_activation_grad']
                 beta1, beta2, beta3 = group['betas']
 
                 state = self.state[p]
@@ -201,6 +205,8 @@ class ASAdam(Optimizer):
                     denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(group['eps'])
 
                 # active set feature
+                if store_activation_grad:
+                    state['activation_grad'] = None
                 if l1 is not None or glue is not None or l1_log is not None:
                     # rename
                     avg_grad = exp_avg
@@ -238,9 +244,17 @@ class ASAdam(Optimizer):
                                 # if we were to activate all top dimensions
                                 all_activated = active.clone()
                                 all_activated[selected] = True
-                                # only activate those that surpass the threshold from above
-                                active.logical_or_(torch.logical_and(new_active, all_activated))
+                                # only activate those that also surpass the threshold from above
+                                eff_new_active = torch.logical_and(new_active, all_activated)
+                                # store activation gradient
+                                if store_activation_grad:
+                                    state['activation_grad'] = reduced_abs_grad[eff_new_active].max()
+                                # activate selected
+                                active.logical_or_(eff_new_active)
                             else:
+                                # store activation gradient
+                                if store_activation_grad:
+                                    state['activation_grad'] = reduced_abs_grad[new_active].max()
                                 # activate all
                                 active.logical_or_(new_active)
                     # use full or reduced gradient

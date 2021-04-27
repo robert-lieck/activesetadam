@@ -87,7 +87,14 @@ class TestASAdam(TestCase):
             do_plot = cls.do_plot
         if asadam_kwargs is None:
             asadam_kwargs = {}
-        asadam_kwargs = {**dict(lr=lr, debug=True, l1=None, glue=None, l1_log=None, log_scale=None, safety=1),
+        asadam_kwargs = {**dict(lr=lr,
+                                debug=True,
+                                store_activation_grad=True,
+                                l1=None,
+                                glue=None,
+                                l1_log=None,
+                                log_scale=None,
+                                safety=1),
                          **asadam_kwargs}
 
         mode_list = []
@@ -140,6 +147,7 @@ class TestASAdam(TestCase):
                 raise ValueError(f"Unsupported mode '{mode}'")
 
             trace = [module.loc.clone().detach()]
+            activation_grad = []
             for it in range(n_iterations):
                 optimizer.zero_grad()
                 loss = module()
@@ -147,6 +155,8 @@ class TestASAdam(TestCase):
                 optimizer.step()
                 # collect stats
                 trace += [module.loc.clone().detach()]
+                if mode != 'Adam':
+                    activation_grad += [optimizer.state[module.loc]['activation_grad']]
                 for key, val in stats.items():
                     val.append(getattr(optimizer, key).clone().detach())
                 # print(f"{module.loc.detach().numpy()}: {loss}")
