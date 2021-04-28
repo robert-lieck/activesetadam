@@ -244,8 +244,8 @@ class ASAdam(Optimizer):
                             state['activation_step'] = 0
                             if max_activation is not None:
                                 # find the dimension with highest gradient (setting already active to zero)
-                                linear_sorted = np.lexsort((torch.rand_like(reduced_abs_grad).numpy().flatten(),
-                                                            reduced_abs_grad.mul(new_active).numpy().flatten()))
+                                linear_sorted = np.lexsort((torch.rand_like(reduced_abs_grad).cpu().numpy().flatten(),
+                                                            reduced_abs_grad.mul(new_active).cpu().numpy().flatten()))
                                 selected = np.unravel_index(indices=linear_sorted[-max_activation:],
                                                             shape=reduced_abs_grad.shape)
                                 # if we were to activate all top dimensions
